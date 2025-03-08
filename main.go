@@ -12,6 +12,10 @@ import (
 	"github.com/gorilla/mux"
 )
 
+type CLS struct {
+	Celsius int `json:"celsius"`
+}
+
 type DB struct {
 	movies []Movie
 
@@ -115,6 +119,17 @@ func deleteMovie(db *DB) http.HandlerFunc {
 	}
 }
 
+func celsiusToFarangeyt(w http.ResponseWriter, r *http.Request) {
+	var cls CLS
+	err := json.NewDecoder(r.Body).Decode(&cls)
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	far := (cls.Celsius * 9 / 5) + 32
+	json.NewEncoder(w).Encode(far)
+}
+
 func main() {
 	db := NewDB()
 	r := mux.NewRouter()
@@ -124,6 +139,8 @@ func main() {
 	r.HandleFunc("/movies", createMovie(db)).Methods("POST")
 	r.HandleFunc("/movies/{id}", updateMovie(db)).Methods("PUT")
 	r.HandleFunc("/movies/{id}", deleteMovie(db)).Methods("DELETE")
+
+	r.HandleFunc("/clstofar", celsiusToFarangeyt).Methods("POST")
 
 	fmt.Printf("Starting server at the port 8000 ")
 	log.Fatal(http.ListenAndServe(":8000", r))
