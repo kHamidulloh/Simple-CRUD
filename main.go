@@ -7,9 +7,20 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/gorilla/mux"
 )
+
+type DB struct {
+	movies []Movie
+
+	sync.RWMutex
+}
+
+func NewDB() *DB {
+	return &DB{movies: make([]Movie, 0)}
+}
 
 type Movie struct {
 	ID       string    `json:"id"`
@@ -23,77 +34,96 @@ type Director struct {
 	LastName  string `json:"lastname"`
 }
 
-func getMovies(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(movies)
-}
+func getMovies(db *DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		db.RLock()
+		defer db.RUnlock()
 
-func deleteMovie(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	params := mux.Vars(r)
-	for index, item := range movies {
-		if item.ID == params["id"] {
-			movies = append(movies[:index], movies[index+1:]...)
-			break
-		}
-	}
-	json.NewEncoder(w).Encode(movies)
-}
-
-func getMovie(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	params := mux.Vars(r)
-	for _, item := range movies {
-		if item.ID == params["id"] {
-			json.NewEncoder(w).Encode(item)
-			return
-		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(db.movies)
 	}
 }
 
-func createMovie(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	var movie Movie
-	_ = json.NewDecoder(r.Body).Decode(&movie)
-	movie.ID = strconv.Itoa(rand.IntN(100000))
-	movies = append(movies, movie)
-	json.NewEncoder(w).Encode(movie)
-}
+func getMovie(db *DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		db.RLock()
+		defer db.RUnlock()
 
-func updateMovie(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	params := mux.Vars(r)
+		w.Header().Set("Content-Type", "application/json")
+		params := mux.Vars(r)
+		for _, item := range db.movies {
+			if item.ID == params["id"] {
+				json.NewEncoder(w).Encode(item)
+				return
+			}
 
-	for index, item := range movies {
-		if item.ID == params["id"] {
-			movies = append(movies[:index], movies[index+1:]...)
-			var movie Movie
-
-			_ = json.NewDecoder(r.Body).Decode(&movie)
-			movie.ID = strconv.Itoa(rand.IntN(100000))
-			movies = append(movies, movie)
-			json.NewEncoder(w).Encode(movie)
-			return
 		}
 	}
 }
 
-var movies []Movie
+func createMovie(db *DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		db.Lock()
+		defer db.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		var movie Movie
+		_ = json.NewDecoder(r.Body).Decode(&movie)
+		movie.ID = strconv.Itoa(rand.IntN(100000))
+		db.movies = append(db.movies, movie)
+		json.NewEncoder(w).Encode(movie)
+	}
+}
+
+func updateMovie(db *DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		db.Lock()
+		defer db.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		params := mux.Vars(r)
+
+		for index, item := range db.movies {
+			if item.ID == params["id"] {
+				db.movies = append(db.movies[:index], db.movies[index+1:]...)
+				var movie Movie
+
+				_ = json.NewDecoder(r.Body).Decode(&movie)
+				movie.ID = strconv.Itoa(rand.IntN(100000))
+				db.movies = append(db.movies, movie)
+				json.NewEncoder(w).Encode(movie)
+				return
+			}
+		}
+	}
+}
+
+func deleteMovie(db *DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		db.Lock()
+		defer db.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		params := mux.Vars(r)
+		for index, item := range db.movies {
+			if item.ID == params["id"] {
+				db.movies = append(db.movies[:index], db.movies[index+1:]...)
+				break
+			}
+		}
+		json.NewEncoder(w).Encode(db.movies)
+	}
+}
 
 func main() {
+	db := NewDB()
 	r := mux.NewRouter()
 
-	movies = append(movies, Movie{ID: "1", Isbn: "1234", Title: "Movie one", Director: &Director{FirstName: "John", LastName: "Doe"}})
-
-	movies = append(movies, Movie{ID: "2", Isbn: "3123", Title: "Movie two", Director: &Director{FirstName: "Jhon", LastName: "Dou"}})
-
-	movies = append(movies, Movie{ID: "3", Isbn: "1234", Title: "Movie one", Director: &Director{FirstName: "Bober", LastName: "Kurva"}})
-
-	r.HandleFunc("/movies", getMovies).Methods("GET")
-	r.HandleFunc("/movies/{id}", getMovie).Methods("GET")
-	r.HandleFunc("/movies", createMovie).Methods("POST")
-	r.HandleFunc("/movies/{id}", updateMovie).Methods("PUT")
-	r.HandleFunc("/movies/{id}", deleteMovie).Methods("DELETE")
+	r.HandleFunc("/movies", getMovies(db)).Methods("GET")
+	r.HandleFunc("/movies/{id}", getMovie(db)).Methods("GET")
+	r.HandleFunc("/movies", createMovie(db)).Methods("POST")
+	r.HandleFunc("/movies/{id}", updateMovie(db)).Methods("PUT")
+	r.HandleFunc("/movies/{id}", deleteMovie(db)).Methods("DELETE")
 
 	fmt.Printf("Starting server at the port 8000 ")
 	log.Fatal(http.ListenAndServe(":8000", r))
